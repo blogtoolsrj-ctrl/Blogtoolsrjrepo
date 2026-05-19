@@ -1,21 +1,22 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Truck, Clock, Gauge, Database, CheckCircle2, RefreshCw, FileSpreadsheet, ChevronRight, Camera, AlertCircle } from 'lucide-react';
+import { Upload, Truck, Clock, Gauge, Database, CheckCircle2, RefreshCw, FileSpreadsheet, ChevronRight, Camera, AlertCircle, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { processTripCardAction, syncToSheetsAction } from '@/app/actions/sync-action';
 import type { ActionState } from '@/app/actions/types';
-import { MetricCard } from '@/components/MetricCard';
-import { TallyDisplay } from '@/components/TallyDisplay';
+import type { ExtractTripCardDataOutput } from '@/ai/flows/extract-trip-card-data-flow';
 import { CameraModule } from '@/components/CameraModule';
+import { TallyDisplay } from '@/components/TallyDisplay';
 
 /**
- * Compresses a base64 image string client-side to ensure it meets server limits.
+ * Compresses a base64 image string client-side.
  */
 async function compressImage(base64Str: string, maxWidth = 1200, maxHeight = 1200, quality = 0.8): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -59,7 +60,8 @@ export default function Dashboard() {
   const [syncing, setSyncing] = useState(false);
   const [step, setStep] = useState(1);
   const [extractionData, setExtractionData] = useState<ActionState | null>(null);
-  const [sheetId, setSheetId] = useState('');
+  const [editedData, setEditedData] = useState<ExtractTripCardDataOutput | null>(null);
+  const [sheetId, setSheetId] = useState('1bBNw90cRw1MURyXiHdxmY9e0JIxgyOToX4XFrF2rY5w');
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [appError, setAppError] = useState<string | null>(null);
   
@@ -76,17 +78,13 @@ export default function Dashboard() {
           const compressed = await compressImage(reader.result as string);
           setImage(compressed);
           setExtractionData(null);
+          setEditedData(null);
           setStep(1);
         } catch (err) {
-          console.error("Compression failed:", err);
           setImage(reader.result as string);
         } finally {
           setLoading(false);
         }
-      };
-      reader.onerror = () => {
-        setAppError("Failed to read the selected file.");
-        setLoading(false);
       };
       reader.readAsDataURL(file);
     }
@@ -99,9 +97,9 @@ export default function Dashboard() {
       const compressed = await compressImage(base64Image);
       setImage(compressed);
       setExtractionData(null);
+      setEditedData(null);
       setStep(1);
     } catch (err) {
-      console.error("Image compression failed:", err);
       setImage(base64Image);
     } finally {
       setLoading(false);
@@ -115,34 +113,66 @@ export default function Dashboard() {
     }
     setLoading(true);
     setAppError(null);
-    console.log("Initiating OCR process...");
     
     try {
       const res = await processTripCardAction(image);
-      console.log("OCR Result:", res);
       if (!res.success) {
         setAppError(`Extraction Error: ${res.message}`);
       } else {
         setExtractionData(res);
+        setEditedData(res.data || null);
         setStep(2);
       }
     } catch (err: any) {
-      console.error("OCR Process failed unexpectedly:", err);
       setAppError(err.message || "An unexpected error occurred during AI processing.");
     } finally {
       setLoading(false);
     }
   };
 
+  const handleFieldChange = (field: string, value: any) => {
+    if (!editedData) return;
+    
+    setEditedData(prev => {
+      if (!prev) return null;
+      
+      const newData = { ...prev };
+      if (field.includes('.')) {
+        const [parent, child] = field.split('.');
+        (newData as any)[parent] = {
+          ...(newData as any)[parent],
+          [child]: value
+        };
+      } else {
+        (newData as any)[field] = value;
+      }
+      return newData;
+    });
+  };
+
+  const handleTallyChange = (pc: string, value: number) => {
+    if (!editedData) return;
+    setEditedData(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        pcTally: {
+          ...prev.pcTally,
+          [pc]: value
+        }
+      };
+    });
+  };
+
   const handleSync = async () => {
-    if (!extractionData?.data || !sheetId) {
-      setAppError("Please provide a valid Spreadsheet ID.");
+    if (!editedData || !sheetId) {
+      setAppError("Please provide a valid Spreadsheet ID and ensure data is loaded.");
       return;
     }
     setSyncing(true);
     setAppError(null);
     try {
-      const res = await syncToSheetsAction(sheetId, extractionData.data);
+      const res = await syncToSheetsAction(sheetId, editedData);
       if (!res.success) {
         setAppError(`Sync Error: ${res.message}`);
       } else {
@@ -150,7 +180,6 @@ export default function Dashboard() {
         setExtractionData(prev => prev ? { ...prev, syncResult: res.syncResult } : null);
       }
     } catch (err: any) {
-      console.error("Sync process failed:", err);
       setAppError(err.message || "An error occurred during synchronization.");
     } finally {
       setSyncing(false);
@@ -260,7 +289,7 @@ export default function Dashboard() {
                 </Button>
               )}
 
-              {extractionData && step >= 2 && (
+              {editedData && step >= 2 && (
                 <div className="pt-4 border-t space-y-4 animate-in slide-in-from-top-2">
                   <div className="space-y-2">
                     <Label htmlFor="sheetId" className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
@@ -297,7 +326,7 @@ export default function Dashboard() {
                   </Button>
                   
                   {step === 2 && (
-                    <Button variant="ghost" size="sm" className="w-full text-xs opacity-50" onClick={() => setStep(1)}>
+                    <Button variant="ghost" size="sm" className="w-full text-xs opacity-50" onClick={() => { setStep(1); setEditedData(null); }}>
                       Rescan / Change Image
                     </Button>
                   )}
@@ -325,66 +354,127 @@ export default function Dashboard() {
         </div>
 
         <div className="lg:col-span-8 space-y-8">
-          {extractionData?.data ? (
+          {editedData ? (
             <div className="space-y-8 animate-in slide-in-from-right duration-500">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <MetricCard 
-                  label="Operator Name" 
-                  value={extractionData.data.operatorName} 
-                  icon={Clock} 
-                  subLabel="Extracted & Translated"
-                />
-                <MetricCard 
-                  label="Door Number" 
-                  value={extractionData.data.doorNo} 
-                  icon={Truck} 
-                  subLabel="Vehicle Identification"
-                />
-                <MetricCard 
-                  label="Shift" 
-                  value={extractionData.data.shift} 
-                  icon={Clock} 
-                  subLabel="Work Cycle Normalization"
-                />
-              </div>
-
+              {/* Header Info Edit */}
               <Card className="bg-card border-border overflow-hidden">
                 <CardHeader className="bg-secondary/30 pb-4 border-b">
                   <div className="flex items-center justify-between">
                     <div>
-                      <CardTitle className="text-md font-headline">Operational Metrics</CardTitle>
-                      <CardDescription>HMR and Kilometer readings extracted from card.</CardDescription>
+                      <CardTitle className="text-md font-headline">Review & Edit Extraction</CardTitle>
+                      <CardDescription>Correct any misread text before committing to sheets.</CardDescription>
                     </div>
-                    <Gauge className="w-6 h-6 text-accent opacity-50" />
+                    <Clock className="w-6 h-6 text-accent opacity-50" />
                   </div>
                 </CardHeader>
-                <CardContent className="p-6 grid grid-cols-2 md:grid-cols-4 gap-6">
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Start HMR</p>
-                    <p className="text-2xl font-headline font-bold">{extractionData.data.metrics.startingHMR}</p>
+                <CardContent className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Operator Name</Label>
+                    <Input 
+                      value={editedData.operatorName} 
+                      onChange={(e) => handleFieldChange('operatorName', e.target.value)}
+                      className="bg-background/50"
+                    />
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest text-accent">Close HMR</p>
-                    <p className="text-2xl font-headline font-bold text-accent">{extractionData.data.metrics.closingHMR}</p>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Door No</Label>
+                    <Input 
+                      value={editedData.doorNo} 
+                      onChange={(e) => handleFieldChange('doorNo', e.target.value)}
+                      className="bg-background/50"
+                    />
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Start KM</p>
-                    <p className="text-2xl font-headline font-bold">{extractionData.data.metrics.startingKM}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest text-accent">Close KM</p>
-                    <p className="text-2xl font-headline font-bold text-accent">{extractionData.data.metrics.endingKM}</p>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Shift</Label>
+                    <Select value={editedData.shift} onValueChange={(val) => handleFieldChange('shift', val)}>
+                      <SelectTrigger className="bg-background/50">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="A">Shift A</SelectItem>
+                        <SelectItem value="B">Shift B</SelectItem>
+                        <SelectItem value="C">Shift C</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </CardContent>
               </Card>
 
+              {/* Metrics Edit */}
+              <Card className="bg-card border-border overflow-hidden">
+                <CardHeader className="bg-secondary/30 pb-4 border-b">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-md font-headline">Operational Metrics</CardTitle>
+                    <Gauge className="w-6 h-6 text-accent opacity-50" />
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6 grid grid-cols-2 md:grid-cols-4 gap-6">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Start HMR</Label>
+                    <Input 
+                      type="number"
+                      value={editedData.metrics.startingHMR} 
+                      onChange={(e) => handleFieldChange('metrics.startingHMR', Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-accent uppercase tracking-widest">Close HMR</Label>
+                    <Input 
+                      type="number"
+                      value={editedData.metrics.closingHMR} 
+                      onChange={(e) => handleFieldChange('metrics.closingHMR', Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Start KM</Label>
+                    <Input 
+                      type="number"
+                      value={editedData.metrics.startingKM} 
+                      onChange={(e) => handleFieldChange('metrics.startingKM', Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-accent uppercase tracking-widest">Close KM</Label>
+                    <Input 
+                      type="number"
+                      value={editedData.metrics.endingKM} 
+                      onChange={(e) => handleFieldChange('metrics.endingKM', Number(e.target.value))}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Tally Edit */}
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
                   <div className="h-px flex-1 bg-border" />
                   <h3 className="text-xs font-bold uppercase tracking-[0.3em] text-muted-foreground">Fuzzy PC Tally Report</h3>
                   <div className="h-px flex-1 bg-border" />
                 </div>
-                <TallyDisplay tally={extractionData.data.pcTally} />
+                
+                <Card className="bg-card border-border overflow-hidden">
+                  <CardContent className="p-0">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 p-6">
+                      {Object.entries(editedData.pcTally).map(([pc, count]) => (
+                        <div key={pc} className="space-y-2 p-3 bg-secondary/20 rounded-lg border border-border/50">
+                          <Label className="text-[10px] font-bold uppercase opacity-70">{pc}</Label>
+                          <Input 
+                            type="number" 
+                            size={1}
+                            value={count} 
+                            onChange={(e) => handleTallyChange(pc, Number(e.target.value))}
+                            className="h-8 text-center font-mono font-bold text-accent"
+                          />
+                        </div>
+                      ))}
+                      {Object.keys(editedData.pcTally).length === 0 && (
+                        <div className="col-span-full py-8 text-center text-muted-foreground opacity-50">
+                          No PC trips identified.
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             </div>
           ) : (
