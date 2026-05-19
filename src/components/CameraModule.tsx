@@ -20,137 +20,105 @@ interface CameraModuleProps {
 export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
-  const [error, setError] = useState<string | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  
   const [isInitializing, setIsInitializing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
 
   const stopCamera = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach(track => {
-        track.stop();
-      });
-      setStream(null);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-  }, [stream]);
+  }, []);
 
   const startCamera = useCallback(async () => {
-    if (isInitializing) return;
     setIsInitializing(true);
     setError(null);
+    stopCamera();
 
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("Camera API not supported in this environment.");
+        throw new Error("Camera access is not supported by your browser.");
       }
 
-      // 1. Thoroughly stop existing stream
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+      // Check if any video input devices exist
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(d => d.kind === 'videoinput');
+      
+      if (videoDevices.length === 0) {
+        throw new Error("No camera hardware found on this device.");
       }
 
-      let newStream: MediaStream | null = null;
+      let newStream: MediaStream;
 
-      // 2. Multi-stage Fallback Strategy
+      // Stage 1: Try with facingMode (ideal for mobile)
       try {
-        // Attempt 1: High quality with preferred facing mode
         newStream = await navigator.mediaDevices.getUserMedia({
-          video: {
+          video: { 
             facingMode: { ideal: facingMode },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
           }
         });
-      } catch (err: any) {
-        console.warn("Attempt 1 failed, trying standard quality:", err.name);
-        try {
-          // Attempt 2: Standard quality with preferred facing mode
-          newStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: facingMode } }
-          });
-        } catch (err2: any) {
-          console.warn("Attempt 2 failed, trying absolute fallback:", err2.name);
-          // Attempt 3: Absolute fallback - trigger any available video device
-          // This is the most likely to succeed and trigger the permission prompt
-          newStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        }
+      } catch (e) {
+        console.warn("Stage 1 failed, trying absolute fallback", e);
+        // Stage 2: Absolute fallback (best for MacBooks/Desktops)
+        newStream = await navigator.mediaDevices.getUserMedia({ video: true });
       }
 
-      if (!newStream) {
-        throw new Error("Could not initialize camera stream.");
-      }
-
-      setStream(newStream);
+      streamRef.current = newStream;
       
-      // Give the video element a moment to catch up if the dialog is still rendering
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
-        try {
-          await videoRef.current.play();
-        } catch (playErr) {
-          console.error("Video play error:", playErr);
-        }
+        // Some browsers require explicit play()
+        await videoRef.current.play().catch(console.error);
       }
     } catch (err: any) {
-      console.error("Camera access error:", err);
+      console.error("Camera error:", err);
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setError("Camera permission denied. Please allow access in your browser settings.");
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setError("No camera device found. If you are on a laptop, ensure your lid is open and the camera isn't blocked.");
+        setError("Camera not found. If you're using an external camera, ensure it's connected.");
       } else {
-        setError(`Camera Error: ${err.message || "Unable to start video"}`);
+        setError(err.message || "Failed to start camera.");
       }
     } finally {
       setIsInitializing(false);
     }
-  }, [facingMode, stream, isInitializing]);
+  }, [facingMode, stopCamera]);
 
   useEffect(() => {
     if (isOpen) {
-      // Small delay to ensure the DOM is ready for the videoRef
-      const timer = setTimeout(() => {
-        startCamera();
-      }, 100);
+      // Small delay to ensure Dialog animation doesn't interfere with video mounting
+      const timer = setTimeout(startCamera, 300);
       return () => {
         clearTimeout(timer);
         stopCamera();
       };
-    } else {
-      stopCamera();
     }
-  }, [isOpen]);
-
-  // Restart camera when facingMode changes (e.g. user clicks flip button)
-  useEffect(() => {
-    if (isOpen && stream) {
-      stopCamera();
-      // Use a timeout to ensure state transitions don't clash
-      const timer = setTimeout(() => {
-        startCamera();
-      }, 50);
-      return () => clearTimeout(timer);
-    }
-  }, [facingMode]);
+  }, [isOpen, startCamera, stopCamera]);
 
   const handleCapture = () => {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       
+      // Use actual video dimensions
       const width = video.videoWidth;
       const height = video.videoHeight;
       
       if (width && height) {
         canvas.width = width;
         canvas.height = height;
-        
         const context = canvas.getContext('2d');
         if (context) {
           context.drawImage(video, 0, 0, width, height);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
           onCapture(dataUrl);
           onClose();
         }
@@ -165,35 +133,36 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-2xl bg-black border-zinc-800 p-0 overflow-hidden outline-none">
-        <DialogHeader className="p-4 bg-zinc-900/50 absolute top-0 left-0 right-0 z-10 backdrop-blur-md">
+        <DialogHeader className="p-4 bg-zinc-900/80 absolute top-0 left-0 right-0 z-20 backdrop-blur-md border-b border-white/5">
           <DialogTitle className="text-white flex items-center gap-2">
             <Camera className="w-5 h-5 text-accent" />
-            Scanner Mode
+            Scanner Viewfinder
           </DialogTitle>
           <DialogDescription className="text-zinc-400">
-            Center the trip card in the viewfinder.
+            Align the trip card within the frame.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
+        <div className="relative aspect-video bg-zinc-950 flex items-center justify-center overflow-hidden min-h-[300px]">
           {error ? (
-            <div className="p-10 text-center space-y-4">
+            <div className="p-10 text-center space-y-4 z-10">
               <AlertCircle className="w-12 h-12 text-destructive mx-auto mb-2" />
-              <p className="text-white font-medium">{error}</p>
+              <p className="text-white font-medium max-w-xs mx-auto">{error}</p>
               <Button 
                 variant="outline" 
                 size="sm" 
-                onClick={() => startCamera()} 
-                className="bg-zinc-800 border-zinc-700 text-white"
+                onClick={startCamera} 
+                className="bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700"
               >
-                Try Again
+                Retry Camera
               </Button>
             </div>
           ) : (
             <>
               {isInitializing && (
-                <div className="absolute inset-0 flex items-center justify-center bg-zinc-950 z-20">
-                  <RefreshCw className="w-8 h-8 text-accent animate-spin" />
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 z-30">
+                  <RefreshCw className="w-8 h-8 text-accent animate-spin mb-4" />
+                  <p className="text-xs text-zinc-500 font-mono animate-pulse">Initializing Hardware...</p>
                 </div>
               )}
               <video
@@ -205,31 +174,33 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
               />
               <canvas ref={canvasRef} className="hidden" />
               
-              {!isInitializing && (
-                <div className="absolute inset-10 border-2 border-white/20 rounded-lg pointer-events-none z-10">
-                  <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-accent rounded-tl-sm" />
-                  <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-accent rounded-tr-sm" />
-                  <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-accent rounded-bl-sm" />
-                  <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-accent rounded-br-sm" />
+              {!isInitializing && !error && (
+                <div className="absolute inset-8 border-2 border-white/10 rounded-lg pointer-events-none z-10">
+                  <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-accent rounded-tl-sm" />
+                  <div className="absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-accent rounded-tr-sm" />
+                  <div className="absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 border-accent rounded-bl-sm" />
+                  <div className="absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 border-accent rounded-br-sm" />
                 </div>
               )}
             </>
           )}
         </div>
 
-        <div className="p-6 bg-zinc-900/90 flex items-center justify-between gap-4">
-          <Button variant="ghost" size="icon" onClick={onClose} className="text-white hover:bg-white/10 rounded-full h-12 w-12">
+        <div className="p-6 bg-zinc-900 flex items-center justify-between gap-4 border-t border-white/5">
+          <Button variant="ghost" size="icon" onClick={onClose} className="text-zinc-400 hover:text-white hover:bg-white/10 rounded-full h-12 w-12 transition-colors">
             <X className="w-6 h-6" />
           </Button>
           
           <button 
             onClick={handleCapture}
             disabled={!!error || isInitializing}
-            className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-white transition-all active:scale-90 disabled:opacity-20 shadow-xl"
+            className="group relative flex items-center justify-center w-20 h-20 rounded-full bg-white transition-all active:scale-90 disabled:opacity-20 shadow-[0_0_30px_rgba(255,255,255,0.2)]"
             aria-label="Capture Photo"
           >
-            <div className="w-12 h-12 rounded-full border-2 border-black flex items-center justify-center">
-               <Circle className="w-8 h-8 text-black fill-black" />
+            <div className="w-16 h-16 rounded-full border-4 border-black/10 flex items-center justify-center">
+               <div className="w-12 h-12 rounded-full bg-zinc-900 flex items-center justify-center">
+                 <div className="w-8 h-8 rounded-full bg-accent animate-pulse" />
+               </div>
             </div>
           </button>
 
@@ -238,7 +209,7 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
             size="icon" 
             onClick={toggleCamera} 
             disabled={isInitializing || !!error}
-            className="text-white hover:bg-white/10 rounded-full h-12 w-12"
+            className="text-zinc-400 hover:text-white hover:bg-white/10 rounded-full h-12 w-12 transition-colors"
           >
             <RefreshCw className="w-6 h-6" />
           </Button>
