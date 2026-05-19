@@ -55,10 +55,7 @@ const extractTripCardDataPrompt = ai.definePrompt({
   input: { schema: ExtractTripCardDataInputSchema },
   output: { schema: ExtractTripCardDataOutputSchema },
   prompt: `You are an expert OCR and data extraction agent specialized in processing industrial trip card images.
-Your task is to analyze the provided trip card image and extract specific information into a JSON object.
-
-Output MUST be a JSON object conforming to the following structure:
-{{jsonSchema output.schema}}
+Your task is to analyze the provided trip card image and extract specific information.
 
 Specific instructions:
 1. Operator Name: Extract the operator's name. If written in Hindi, translate it to English (Roman script).

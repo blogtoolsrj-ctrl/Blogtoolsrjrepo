@@ -50,11 +50,11 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
         stream.getTracks().forEach(track => track.stop());
       }
 
-      // Sequential fallback constraints
+      // Broadest possible constraints for maximum compatibility
       const constraintSets: MediaStreamConstraints[] = [
-        { video: { facingMode: { ideal: facingMode }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
+        { video: { facingMode: facingMode, width: { ideal: 1280 }, height: { ideal: 720 } } },
         { video: { facingMode: facingMode } },
-        { video: true } // Ultimate fallback: just any video device
+        { video: true }
       ];
 
       let newStream: MediaStream | null = null;
@@ -66,12 +66,11 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
           if (newStream) break;
         } catch (e) {
           lastError = e;
-          console.warn("Camera constraint set failed, trying fallback...", constraints, e);
         }
       }
 
       if (!newStream) {
-        throw lastError || new Error("Could not find any available camera device.");
+        throw lastError || new Error("No camera device found.");
       }
 
       setStream(newStream);
@@ -79,13 +78,13 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
         videoRef.current.srcObject = newStream;
       }
     } catch (err: any) {
-      console.error("Final camera access error:", err);
-      if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setError("No camera device was found on this system.");
-      } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setError("Camera access was denied. Please check your browser permissions.");
+      console.error("Camera access error:", err);
+      if (err.name === 'NotFoundError') {
+        setError("No camera device detected. If you have one, please check connections.");
+      } else if (err.name === 'NotAllowedError') {
+        setError("Camera permission denied. Please allow camera access in your browser settings.");
       } else {
-        setError(`Camera Error: ${err.message || "Unknown error"}`);
+        setError(`Camera Error: ${err.message || "Unable to start video"}`);
       }
     } finally {
       setIsInitializing(false);
@@ -106,7 +105,6 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
       const video = videoRef.current;
       const canvas = canvasRef.current;
       
-      // Ensure we have valid dimensions
       const width = video.videoWidth || 1280;
       const height = video.videoHeight || 720;
       
@@ -125,9 +123,8 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
 
   const toggleCamera = () => {
     setFacingMode(prev => (prev === 'user' ? 'environment' : 'user'));
-    // Restart camera with new facing mode
     stopCamera();
-    setTimeout(() => startCamera(), 100);
+    setTimeout(() => startCamera(), 150);
   };
 
   return (
@@ -139,7 +136,7 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
             Scan Trip Card
           </DialogTitle>
           <DialogDescription className="text-zinc-400">
-            {isInitializing ? "Starting camera..." : "Align the card within the frame."}
+            Align the card within the frame.
           </DialogDescription>
         </DialogHeader>
 
