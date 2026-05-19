@@ -24,31 +24,62 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [error, setError] = useState<string | null>(null);
 
+  const stopCamera = useCallback(() => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, [stream]);
+
   const startCamera = useCallback(async () => {
     try {
+      setError(null);
+      
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Camera API not supported in this browser or context.");
+      }
+
+      // Stop any existing stream first
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
       
-      const constraints = {
-        video: {
-          facingMode: facingMode,
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        }
-      };
+      // Try with ideal constraints first
+      let newStream: MediaStream;
+      try {
+        newStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facingMode,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
+        });
+      } catch (e) {
+        console.warn("Retrying camera with simpler constraints...");
+        // Fallback to basic video access
+        newStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: facingMode } 
+        });
+      }
       
-      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
       setStream(newStream);
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
       }
-      setError(null);
     } catch (err: any) {
       console.error("Camera access error:", err);
-      setError("Unable to access camera. Please ensure permissions are granted.");
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setError("Camera permission denied. Please enable it in browser settings.");
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setError("No camera device found.");
+      } else {
+        setError("Unable to access camera. Please check permissions and try again.");
+      }
     }
-  }, [facingMode, stream]);
+  }, [facingMode]);
 
   useEffect(() => {
     if (isOpen) {
@@ -59,23 +90,20 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
     return () => stopCamera();
   }, [isOpen, facingMode]);
 
-  const stopCamera = () => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-  };
-
   const handleCapture = () => {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
+      
+      // Use original video dimensions for quality
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
+      
       const context = canvas.getContext('2d');
       if (context) {
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        // Initial capture at high quality
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
         onCapture(dataUrl);
         onClose();
       }
@@ -102,8 +130,10 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
         <div className="relative aspect-[4/3] bg-black flex items-center justify-center">
           {error ? (
             <div className="p-6 text-center space-y-4">
-              <p className="text-destructive font-medium">{error}</p>
-              <Button variant="outline" onClick={startCamera}>Try Again</Button>
+              <p className="text-destructive font-medium text-sm">{error}</p>
+              <Button variant="outline" size="sm" onClick={startCamera} className="bg-zinc-800 border-zinc-700 text-white">
+                Try Again
+              </Button>
             </div>
           ) : (
             <>
@@ -111,6 +141,7 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
                 ref={videoRef}
                 autoPlay
                 playsInline
+                muted
                 className="w-full h-full object-cover"
               />
               <canvas ref={canvasRef} className="hidden" />
@@ -133,7 +164,8 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
           
           <button 
             onClick={handleCapture}
-            className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-white transition-transform active:scale-90"
+            disabled={!!error}
+            className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-white transition-transform active:scale-90 disabled:opacity-50"
           >
             <Circle className="w-12 h-12 text-black fill-black" strokeWidth={1} />
             <div className="absolute inset-0 rounded-full border-4 border-accent scale-110 group-hover:scale-125 transition-transform opacity-20" />

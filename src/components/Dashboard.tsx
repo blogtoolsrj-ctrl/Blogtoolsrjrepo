@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Upload, Truck, Clock, Gauge, Database, CheckCircle2, AlertCircle, RefreshCw, FileSpreadsheet, ChevronRight, Camera } from 'lucide-react';
+import { Upload, Truck, Clock, Gauge, Database, CheckCircle2, RefreshCw, FileSpreadsheet, ChevronRight, Camera } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -12,6 +12,41 @@ import type { ActionState } from '@/app/actions/types';
 import { MetricCard } from '@/components/MetricCard';
 import { TallyDisplay } from '@/components/TallyDisplay';
 import { CameraModule } from '@/components/CameraModule';
+
+/**
+ * Compresses a base64 image string client-side to ensure it meets server limits.
+ */
+async function compressImage(base64Str: string, maxWidth = 1200, maxHeight = 1200, quality = 0.8): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > maxWidth) {
+          height *= maxWidth / width;
+          width = maxWidth;
+        }
+      } else {
+        if (height > maxHeight) {
+          width *= maxHeight / height;
+          height = maxHeight;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return reject(new Error("Canvas context failed"));
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = (e) => reject(e);
+  });
+}
 
 export default function Dashboard() {
   const [image, setImage] = useState<string | null>(null);
@@ -24,23 +59,35 @@ export default function Dashboard() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setImage(reader.result as string);
-        setExtractionData(null);
-        setStep(1);
+      reader.onloadend = async () => {
+        try {
+          const compressed = await compressImage(reader.result as string);
+          setImage(compressed);
+          setExtractionData(null);
+          setStep(1);
+        } catch (err) {
+          console.error("Image compression failed:", err);
+          setImage(reader.result as string);
+        }
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const handleCameraCapture = (base64Image: string) => {
-    setImage(base64Image);
-    setExtractionData(null);
-    setStep(1);
+  const handleCameraCapture = async (base64Image: string) => {
+    try {
+      const compressed = await compressImage(base64Image);
+      setImage(compressed);
+      setExtractionData(null);
+      setStep(1);
+    } catch (err) {
+      console.error("Image compression failed:", err);
+      setImage(base64Image);
+    }
   };
 
   const handleProcess = async () => {
@@ -49,12 +96,13 @@ export default function Dashboard() {
     try {
       const res = await processTripCardAction(image);
       if (!res.success) {
-        window.alert(res.message);
+        window.alert(`Extraction Error: ${res.message}`);
       } else {
         setExtractionData(res);
         setStep(2);
       }
     } catch (err: any) {
+      console.error("OCR Process failed:", err);
       window.alert(err.message || "An unexpected error occurred during OCR.");
     } finally {
       setLoading(false);
@@ -109,7 +157,6 @@ export default function Dashboard() {
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Column: Upload & Sync Configuration */}
         <div className="lg:col-span-4 space-y-6">
           <Card className="bg-card shadow-2xl border-border">
             <CardHeader className="pb-4">
@@ -233,11 +280,9 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Right Column: Results View */}
         <div className="lg:col-span-8 space-y-8">
           {extractionData?.data ? (
             <div className="space-y-8 animate-in slide-in-from-right duration-500">
-              {/* Header Info */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <MetricCard 
                   label="Operator Name" 
@@ -259,7 +304,6 @@ export default function Dashboard() {
                 />
               </div>
 
-              {/* Numerical Metrics */}
               <Card className="bg-card border-border overflow-hidden">
                 <CardHeader className="bg-secondary/30 pb-4 border-b">
                   <div className="flex items-center justify-between">
@@ -290,7 +334,6 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
 
-              {/* PC Tally Tool */}
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
                   <div className="h-px flex-1 bg-border" />
