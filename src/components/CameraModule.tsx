@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Camera, X, RefreshCw, Circle, AlertCircle } from 'lucide-react';
+import { Camera, X, RefreshCw, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -46,17 +46,10 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
         throw new Error("Camera access is not supported by your browser.");
       }
 
-      // Check if any video input devices exist
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(d => d.kind === 'videoinput');
-      
-      if (videoDevices.length === 0) {
-        throw new Error("No camera hardware found on this device.");
-      }
-
       let newStream: MediaStream;
 
-      // Stage 1: Try with facingMode (ideal for mobile)
+      // Stage 1: Attempt connection with preferred constraints
+      // Using 'ideal' instead of exact to avoid hard failures on desktops
       try {
         newStream = await navigator.mediaDevices.getUserMedia({
           video: { 
@@ -66,8 +59,8 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
           }
         });
       } catch (e) {
-        console.warn("Stage 1 failed, trying absolute fallback", e);
-        // Stage 2: Absolute fallback (best for MacBooks/Desktops)
+        console.warn("Primary camera constraints failed, attempting fallback...", e);
+        // Stage 2: Absolute fallback - this is the most reliable way to trigger permission prompt
         newStream = await navigator.mediaDevices.getUserMedia({ video: true });
       }
 
@@ -75,17 +68,19 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
       
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
-        // Some browsers require explicit play()
-        await videoRef.current.play().catch(console.error);
+        // Ensure play is called after setting srcObject
+        await videoRef.current.play().catch(err => {
+          console.error("Video play failed:", err);
+        });
       }
     } catch (err: any) {
-      console.error("Camera error:", err);
+      console.error("Camera initialization error:", err);
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setError("Camera permission denied. Please allow access in your browser settings.");
+        setError("Camera permission denied. Please allow access in your browser settings to scan cards.");
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setError("Camera not found. If you're using an external camera, ensure it's connected.");
+        setError("No camera hardware detected. If you are on a desktop, please ensure your webcam is connected.");
       } else {
-        setError(err.message || "Failed to start camera.");
+        setError(err.message || "An unexpected error occurred while accessing the camera.");
       }
     } finally {
       setIsInitializing(false);
@@ -94,8 +89,8 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
 
   useEffect(() => {
     if (isOpen) {
-      // Small delay to ensure Dialog animation doesn't interfere with video mounting
-      const timer = setTimeout(startCamera, 300);
+      // Small delay to allow dialog animations to settle
+      const timer = setTimeout(startCamera, 400);
       return () => {
         clearTimeout(timer);
         stopCamera();
@@ -108,7 +103,6 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
       const video = videoRef.current;
       const canvas = canvasRef.current;
       
-      // Use actual video dimensions
       const width = video.videoWidth;
       const height = video.videoHeight;
       
@@ -133,17 +127,17 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-2xl bg-black border-zinc-800 p-0 overflow-hidden outline-none">
-        <DialogHeader className="p-4 bg-zinc-900/80 absolute top-0 left-0 right-0 z-20 backdrop-blur-md border-b border-white/5">
+        <DialogHeader className="p-4 bg-zinc-900/90 absolute top-0 left-0 right-0 z-20 backdrop-blur-md border-b border-white/5">
           <DialogTitle className="text-white flex items-center gap-2">
             <Camera className="w-5 h-5 text-accent" />
-            Scanner Viewfinder
+            Trip Card Scanner
           </DialogTitle>
           <DialogDescription className="text-zinc-400">
-            Align the trip card within the frame.
+            Center the trip card within the frame for best results.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="relative aspect-video bg-zinc-950 flex items-center justify-center overflow-hidden min-h-[300px]">
+        <div className="relative aspect-video bg-zinc-950 flex items-center justify-center overflow-hidden min-h-[350px]">
           {error ? (
             <div className="p-10 text-center space-y-4 z-10">
               <AlertCircle className="w-12 h-12 text-destructive mx-auto mb-2" />
@@ -154,7 +148,7 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
                 onClick={startCamera} 
                 className="bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700"
               >
-                Retry Camera
+                Retry Camera Access
               </Button>
             </div>
           ) : (
@@ -162,7 +156,7 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
               {isInitializing && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 z-30">
                   <RefreshCw className="w-8 h-8 text-accent animate-spin mb-4" />
-                  <p className="text-xs text-zinc-500 font-mono animate-pulse">Initializing Hardware...</p>
+                  <p className="text-xs text-zinc-500 font-mono animate-pulse">Connecting to hardware...</p>
                 </div>
               )}
               <video
@@ -176,10 +170,10 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
               
               {!isInitializing && !error && (
                 <div className="absolute inset-8 border-2 border-white/10 rounded-lg pointer-events-none z-10">
-                  <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-accent rounded-tl-sm" />
-                  <div className="absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-accent rounded-tr-sm" />
-                  <div className="absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 border-accent rounded-bl-sm" />
-                  <div className="absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 border-accent rounded-br-sm" />
+                  <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-accent rounded-tl-sm shadow-[0_0_15px_rgba(82,206,224,0.3)]" />
+                  <div className="absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-accent rounded-tr-sm shadow-[0_0_15px_rgba(82,206,224,0.3)]" />
+                  <div className="absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 border-accent rounded-bl-sm shadow-[0_0_15px_rgba(82,206,224,0.3)]" />
+                  <div className="absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 border-accent rounded-br-sm shadow-[0_0_15px_rgba(82,206,224,0.3)]" />
                 </div>
               )}
             </>
@@ -194,7 +188,7 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
           <button 
             onClick={handleCapture}
             disabled={!!error || isInitializing}
-            className="group relative flex items-center justify-center w-20 h-20 rounded-full bg-white transition-all active:scale-90 disabled:opacity-20 shadow-[0_0_30px_rgba(255,255,255,0.2)]"
+            className="group relative flex items-center justify-center w-20 h-20 rounded-full bg-white transition-all active:scale-90 disabled:opacity-20 shadow-[0_0_30px_rgba(255,255,255,0.25)]"
             aria-label="Capture Photo"
           >
             <div className="w-16 h-16 rounded-full border-4 border-black/10 flex items-center justify-center">
