@@ -47,16 +47,16 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
         throw new Error("Camera API not supported in this environment.");
       }
 
-      // Stop any existing stream before starting a new one
+      // 1. Thoroughly stop existing stream
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
 
       let newStream: MediaStream | null = null;
 
+      // 2. Multi-stage Fallback Strategy
       try {
-        // Try with ideal constraints first. 
-        // Using 'ideal' instead of 'exact' is critical for compatibility across desktops and mobiles.
+        // Attempt 1: High quality with preferred facing mode
         newStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: facingMode },
@@ -64,10 +64,19 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
             height: { ideal: 1080 }
           }
         });
-      } catch (err) {
-        console.warn("Preferred constraints failed, falling back to basic video.", err);
-        // Final fallback: just get any video device. This is most likely to trigger the permission prompt.
-        newStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      } catch (err: any) {
+        console.warn("Attempt 1 failed, trying standard quality:", err.name);
+        try {
+          // Attempt 2: Standard quality with preferred facing mode
+          newStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: facingMode } }
+          });
+        } catch (err2: any) {
+          console.warn("Attempt 2 failed, trying absolute fallback:", err2.name);
+          // Attempt 3: Absolute fallback - trigger any available video device
+          // This is the most likely to succeed and trigger the permission prompt
+          newStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        }
       }
 
       if (!newStream) {
@@ -75,18 +84,22 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
       }
 
       setStream(newStream);
+      
+      // Give the video element a moment to catch up if the dialog is still rendering
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().catch(e => console.error("Error playing video:", e));
-        };
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.error("Video play error:", playErr);
+        }
       }
     } catch (err: any) {
       console.error("Camera access error:", err);
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setError("Camera permission denied. Please allow access in your browser settings.");
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setError("Requested camera device not found. Please ensure your camera is connected.");
+        setError("No camera device found. If you are on a laptop, ensure your lid is open and the camera isn't blocked.");
       } else {
         setError(`Camera Error: ${err.message || "Unable to start video"}`);
       }
@@ -97,10 +110,10 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
 
   useEffect(() => {
     if (isOpen) {
-      // Small delay to ensure the DOM is ready and constraints are settled
+      // Small delay to ensure the DOM is ready for the videoRef
       const timer = setTimeout(() => {
         startCamera();
-      }, 150);
+      }, 100);
       return () => {
         clearTimeout(timer);
         stopCamera();
@@ -109,6 +122,18 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
       stopCamera();
     }
   }, [isOpen]);
+
+  // Restart camera when facingMode changes (e.g. user clicks flip button)
+  useEffect(() => {
+    if (isOpen && stream) {
+      stopCamera();
+      // Use a timeout to ensure state transitions don't clash
+      const timer = setTimeout(() => {
+        startCamera();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [facingMode]);
 
   const handleCapture = () => {
     if (videoRef.current && canvasRef.current) {
@@ -136,14 +161,6 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
   const toggleCamera = () => {
     setFacingMode(prev => (prev === 'user' ? 'environment' : 'user'));
   };
-
-  // Restart camera when facingMode changes
-  useEffect(() => {
-    if (isOpen) {
-      stopCamera();
-      startCamera();
-    }
-  }, [facingMode]);
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -208,7 +225,7 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
           <button 
             onClick={handleCapture}
             disabled={!!error || isInitializing}
-            className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-white transition-all active:scale-90 disabled:opacity-20"
+            className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-white transition-all active:scale-90 disabled:opacity-20 shadow-xl"
             aria-label="Capture Photo"
           >
             <div className="w-12 h-12 rounded-full border-2 border-black flex items-center justify-center">
