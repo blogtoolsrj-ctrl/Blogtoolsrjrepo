@@ -1,4 +1,3 @@
-
 'use client';
 
 import React, { useState, useRef } from 'react';
@@ -8,7 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { processTripCardAction, syncToSheetsAction, ActionState } from '@/app/actions/sync-action';
+import { processTripCardAction, syncToSheetsAction } from '@/app/actions/sync-action';
+import type { ActionState } from '@/app/actions/types';
 import { MetricCard } from '@/components/MetricCard';
 import { TallyDisplay } from '@/components/TallyDisplay';
 

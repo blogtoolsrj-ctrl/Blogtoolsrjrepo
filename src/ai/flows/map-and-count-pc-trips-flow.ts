@@ -1,3 +1,4 @@
+
 'use server';
 /**
  * @fileOverview A Genkit flow for extracting, normalizing, and counting PC trips from OCR text.
@@ -15,37 +16,33 @@ const MapAndCountPCTripsInputSchema = z.object({
 });
 export type MapAndCountPCTripsInput = z.infer<typeof MapAndCountPCTripsInputSchema>;
 
-const MapAndCountPCTripsOutputSchema = z.object({
-  'V-06': z.number().describe('Total trip count for PC V-06. If not found, defaults to 0.'),
-  'V-08': z.number().describe('Total trip count for PC V-08. If not found, defaults to 0.'),
-  'V-09': z.number().describe('Total trip count for PC V-09. If not found, defaults to 0.'),
-  'V-10': z.number().describe('Total trip count for PC V-10. If not found, defaults to 0.'),
-  'V-11': z.number().describe('Total trip count for PC V-11. If not found, defaults to 0.'),
-  'V-42': z.number().describe('Total trip count for PC V-42. If not found, defaults to 0.'),
-  'V-43': z.number().describe('Total trip count for PC V-43. If not found, defaults to 0.'),
-  'V-44': z.number().describe('Total trip count for PC V-44. If not found, defaults to 0.'),
-  'V-45': z.number().describe('Total trip count for PC V-45. If not found, defaults to 0.'),
-  'T-15': z.number().describe('Total trip count for PC T-15. If not found, defaults to 0.'),
-  'T-16': z.number().describe('Total trip count for PC T-16. If not found, defaults to 0.'),
-  'T-17': z.number().describe('Total trip count for PC T-17. If not found, defaults to 0.'),
-  'S-18': z.number().describe('Total trip count for PC S-18. If not found, defaults to 0.'),
-  'S-19': z.number().describe('Total trip count for PC S-19. If not found, defaults to 0.'),
-  'S-20': z.number().describe('Total trip count for PC S-20. If not found, defaults to 0.'),
-  'S-24': z.number().describe('Total trip count for PC S-24. If not found, defaults to 0.'),
-  'V-25': z.number().describe('Total trip count for PC V-25. If not found, defaults to 0.'),
-  'V-26': z.number().describe('Total trip count for PC V-26. If not found, defaults to 0.'),
-  'V-27': z.number().describe('Total trip count for PC V-27. If not found, defaults to 0.'),
-  'V-28': z.number().describe('Total trip count for PC V-28. If not found, defaults to 0.'),
-  'V-29': z.number().describe('Total trip count for PC V-29. If not found, defaults to 0.')
-}).describe('Normalized and counted PC trips.');
+const MapAndCountPCTripsOutputSchema = z.record(z.string(), z.number()).describe('Normalized and counted PC trips.');
 export type MapAndCountPCTripsOutput = z.infer<typeof MapAndCountPCTripsOutputSchema>;
+
+export async function mapAndCountPCTrips(input: MapAndCountPCTripsInput): Promise<MapAndCountPCTripsOutput> {
+  return mapAndCountPCTripsFlow(input);
+}
 
 const pcTallyPrompt = ai.definePrompt({
   name: 'pcTallyPrompt',
   input: { schema: MapAndCountPCTripsInputSchema },
   output: { schema: MapAndCountPCTripsOutputSchema },
-  prompt: `You are an expert in parsing trip card data. Your task is to identify all mentions of PC (Payload Carrier) units from the provided raw OCR text, normalize them according to the specified rules, and then provide a total trip count for each standardized PC.
-If a standardized PC is not mentioned in the text, its count in the output JSON should be 0. Do not list individual trips, only the final total count for each PC.
+  prompt: `You are an expert in parsing trip card data. Your task is to identify all mentions of PC units from the provided text, normalize them, and provide a total trip count for each standardized ID.
 
-Here are the PC Mapping Rules for standardization and fuzzy matching:
-- V-06: Recognize 
+Standardized PCs: V-06, V-08, V-09, V-10, V-11, V-42, V-43, V-44, V-45, T-15, T-16, T-17, S-18, S-19, S-20, S-24, V-25, V-26, V-27, V-28, V-29.
+
+Text: {{{ocrText}}}`,
+});
+
+const mapAndCountPCTripsFlow = ai.defineFlow(
+  {
+    name: 'mapAndCountPCTripsFlow',
+    inputSchema: MapAndCountPCTripsInputSchema,
+    outputSchema: MapAndCountPCTripsOutputSchema,
+  },
+  async (input) => {
+    const { output } = await pcTallyPrompt(input);
+    if (!output) throw new Error('Failed to map and count trips.');
+    return output;
+  }
+);

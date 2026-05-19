@@ -1,15 +1,9 @@
-
 'use server';
 
-import { extractTripCardData, ExtractTripCardDataOutput } from '@/ai/flows/extract-trip-card-data-flow';
+import { extractTripCardData } from '@/ai/flows/extract-trip-card-data-flow';
 import { syncTripDataToSheets } from '@/lib/google-sheets';
-
-export type ActionState = {
-  success: boolean;
-  message: string;
-  data?: ExtractTripCardDataOutput;
-  syncResult?: { targetRow: number; shiftTab: string };
-};
+import type { ActionState } from './types';
+import type { ExtractTripCardDataOutput } from '@/ai/flows/extract-trip-card-data-flow';
 
 export async function processTripCardAction(base64Image: string): Promise<ActionState> {
   try {
