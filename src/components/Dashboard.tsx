@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Upload, Truck, Clock, Gauge, Database, CheckCircle2, AlertCircle, RefreshCw, FileSpreadsheet, ChevronRight } from 'lucide-react';
+import { Upload, Truck, Clock, Gauge, Database, CheckCircle2, AlertCircle, RefreshCw, FileSpreadsheet, ChevronRight, Camera } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -11,6 +11,7 @@ import { processTripCardAction, syncToSheetsAction } from '@/app/actions/sync-ac
 import type { ActionState } from '@/app/actions/types';
 import { MetricCard } from '@/components/MetricCard';
 import { TallyDisplay } from '@/components/TallyDisplay';
+import { CameraModule } from '@/components/CameraModule';
 
 export default function Dashboard() {
   const [image, setImage] = useState<string | null>(null);
@@ -19,6 +20,7 @@ export default function Dashboard() {
   const [step, setStep] = useState(1);
   const [extractionData, setExtractionData] = useState<ActionState | null>(null);
   const [sheetId, setSheetId] = useState('');
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -33,6 +35,12 @@ export default function Dashboard() {
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const handleCameraCapture = (base64Image: string) => {
+    setImage(base64Image);
+    setExtractionData(null);
+    setStep(1);
   };
 
   const handleProcess = async () => {
@@ -106,23 +114,44 @@ export default function Dashboard() {
           <Card className="bg-card shadow-2xl border-border">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-headline">Trip Card Input</CardTitle>
-              <CardDescription>Upload a clear photo of the handwritten card.</CardDescription>
+              <CardDescription>Upload or scan a photo of the card.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <Button 
+                  variant="outline" 
+                  className="h-20 flex-col gap-1 border-dashed"
+                  onClick={() => setIsCameraOpen(true)}
+                >
+                  <Camera className="w-5 h-5" />
+                  <span className="text-xs">Scan Camera</span>
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="h-20 flex-col gap-1 border-dashed"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="w-5 h-5" />
+                  <span className="text-xs">Upload File</span>
+                </Button>
+              </div>
+
               <div 
-                className={`relative border-2 border-dashed rounded-xl transition-all duration-300 flex flex-col items-center justify-center p-8 cursor-pointer overflow-hidden ${
+                className={`relative border-2 border-dashed rounded-xl transition-all duration-300 flex flex-col items-center justify-center p-8 cursor-pointer overflow-hidden min-h-[160px] ${
                   image ? 'border-accent bg-accent/5' : 'border-border hover:border-primary/50'
                 }`}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => !image && fileInputRef.current?.click()}
               >
                 {image ? (
-                  <img src={image} alt="Trip Card Preview" className="absolute inset-0 w-full h-full object-cover opacity-20 pointer-events-none" />
-                ) : null}
-                
-                <Upload className={`w-10 h-10 mb-3 ${image ? 'text-accent' : 'text-muted-foreground'}`} />
-                <span className="text-sm font-medium text-center px-4">
-                  {image ? 'Change Card Image' : 'Drop Image or Click to Upload'}
-                </span>
+                  <img src={image} alt="Trip Card Preview" className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+                ) : (
+                  <>
+                    <Database className="w-10 h-10 mb-3 text-muted-foreground" />
+                    <span className="text-sm font-medium text-center px-4 text-muted-foreground">
+                      No image selected
+                    </span>
+                  </>
+                )}
                 <Input
                   ref={fileInputRef}
                   type="file"
@@ -278,12 +307,18 @@ export default function Dashboard() {
               </div>
               <h3 className="text-xl font-headline font-medium">Ready for Extraction</h3>
               <p className="text-muted-foreground mt-2 max-w-sm">
-                Upload a trip card image to begin the intelligent data extraction process.
+                Upload or scan a trip card image to begin the intelligent data extraction process.
               </p>
             </div>
           )}
         </div>
       </div>
+
+      <CameraModule 
+        isOpen={isCameraOpen} 
+        onClose={() => setIsCameraOpen(false)} 
+        onCapture={handleCameraCapture} 
+      />
 
       {loading && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex flex-col items-center justify-center">
