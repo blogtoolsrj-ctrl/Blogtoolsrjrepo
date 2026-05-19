@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
-import { Upload, Truck, Clock, Gauge, Database, CheckCircle2, RefreshCw, FileSpreadsheet, ChevronRight, Camera } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Upload, Truck, Clock, Gauge, Database, CheckCircle2, RefreshCw, FileSpreadsheet, ChevronRight, Camera, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { processTripCardAction, syncToSheetsAction } from '@/app/actions/sync-action';
 import type { ActionState } from '@/app/actions/types';
 import { MetricCard } from '@/components/MetricCard';
@@ -19,6 +20,7 @@ import { CameraModule } from '@/components/CameraModule';
 async function compressImage(base64Str: string, maxWidth = 1200, maxHeight = 1200, quality = 0.8): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = "anonymous";
     img.src = base64Str;
     img.onload = () => {
       const canvas = document.createElement('canvas');
@@ -44,7 +46,10 @@ async function compressImage(base64Str: string, maxWidth = 1200, maxHeight = 120
       ctx.drawImage(img, 0, 0, width, height);
       resolve(canvas.toDataURL('image/jpeg', quality));
     };
-    img.onerror = (e) => reject(e);
+    img.onerror = (e) => {
+      console.error("Image loading error for compression:", e);
+      reject(new Error("Failed to load image for compression"));
+    };
   });
 }
 
@@ -56,12 +61,15 @@ export default function Dashboard() {
   const [extractionData, setExtractionData] = useState<ActionState | null>(null);
   const [sheetId, setSheetId] = useState('');
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [appError, setAppError] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setLoading(true);
+      setAppError(null);
       const reader = new FileReader();
       reader.onloadend = async () => {
         try {
@@ -70,15 +78,23 @@ export default function Dashboard() {
           setExtractionData(null);
           setStep(1);
         } catch (err) {
-          console.error("Image compression failed:", err);
+          console.error("Compression failed:", err);
           setImage(reader.result as string);
+        } finally {
+          setLoading(false);
         }
+      };
+      reader.onerror = () => {
+        setAppError("Failed to read the selected file.");
+        setLoading(false);
       };
       reader.readAsDataURL(file);
     }
   };
 
   const handleCameraCapture = async (base64Image: string) => {
+    setLoading(true);
+    setAppError(null);
     try {
       const compressed = await compressImage(base64Image);
       setImage(compressed);
@@ -87,23 +103,32 @@ export default function Dashboard() {
     } catch (err) {
       console.error("Image compression failed:", err);
       setImage(base64Image);
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleProcess = async () => {
-    if (!image) return;
+    if (!image) {
+      setAppError("Please upload or scan an image first.");
+      return;
+    }
     setLoading(true);
+    setAppError(null);
+    console.log("Initiating OCR process...");
+    
     try {
       const res = await processTripCardAction(image);
+      console.log("OCR Result:", res);
       if (!res.success) {
-        window.alert(`Extraction Error: ${res.message}`);
+        setAppError(`Extraction Error: ${res.message}`);
       } else {
         setExtractionData(res);
         setStep(2);
       }
     } catch (err: any) {
-      console.error("OCR Process failed:", err);
-      window.alert(err.message || "An unexpected error occurred during OCR.");
+      console.error("OCR Process failed unexpectedly:", err);
+      setAppError(err.message || "An unexpected error occurred during AI processing.");
     } finally {
       setLoading(false);
     }
@@ -111,20 +136,22 @@ export default function Dashboard() {
 
   const handleSync = async () => {
     if (!extractionData?.data || !sheetId) {
-      window.alert("Please provide a valid Spreadsheet ID.");
+      setAppError("Please provide a valid Spreadsheet ID.");
       return;
     }
     setSyncing(true);
+    setAppError(null);
     try {
       const res = await syncToSheetsAction(sheetId, extractionData.data);
       if (!res.success) {
-        window.alert(`Sync Error: ${res.message}`);
+        setAppError(`Sync Error: ${res.message}`);
       } else {
         setStep(3);
         setExtractionData(prev => prev ? { ...prev, syncResult: res.syncResult } : null);
       }
     } catch (err: any) {
-      window.alert(err.message || "An error occurred during synchronization.");
+      console.error("Sync process failed:", err);
+      setAppError(err.message || "An error occurred during synchronization.");
     } finally {
       setSyncing(false);
     }
@@ -156,6 +183,14 @@ export default function Dashboard() {
         </div>
       </header>
 
+      {appError && (
+        <Alert variant="destructive" className="animate-in slide-in-from-top-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Operation Failed</AlertTitle>
+          <AlertDescription>{appError}</AlertDescription>
+        </Alert>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-4 space-y-6">
           <Card className="bg-card shadow-2xl border-border">
@@ -169,6 +204,7 @@ export default function Dashboard() {
                   variant="outline" 
                   className="h-20 flex-col gap-1 border-dashed"
                   onClick={() => setIsCameraOpen(true)}
+                  disabled={loading}
                 >
                   <Camera className="w-5 h-5" />
                   <span className="text-xs">Scan Camera</span>
@@ -177,6 +213,7 @@ export default function Dashboard() {
                   variant="outline" 
                   className="h-20 flex-col gap-1 border-dashed"
                   onClick={() => fileInputRef.current?.click()}
+                  disabled={loading}
                 >
                   <Upload className="w-5 h-5" />
                   <span className="text-xs">Upload File</span>
@@ -187,7 +224,7 @@ export default function Dashboard() {
                 className={`relative border-2 border-dashed rounded-xl transition-all duration-300 flex flex-col items-center justify-center p-8 cursor-pointer overflow-hidden min-h-[160px] ${
                   image ? 'border-accent bg-accent/5' : 'border-border hover:border-primary/50'
                 }`}
-                onClick={() => !image && fileInputRef.current?.click()}
+                onClick={() => !image && !loading && fileInputRef.current?.click()}
               >
                 {image ? (
                   <img src={image} alt="Trip Card Preview" className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
@@ -237,6 +274,7 @@ export default function Dashboard() {
                         className="pl-10 font-mono text-xs"
                         value={sheetId}
                         onChange={(e) => setSheetId(e.target.value)}
+                        disabled={syncing || step === 3}
                       />
                     </div>
                   </div>
@@ -257,6 +295,12 @@ export default function Dashboard() {
                     )}
                     {syncing ? 'Syncing...' : step === 3 ? 'Sync Complete' : 'Commit to Spreadsheet'}
                   </Button>
+                  
+                  {step === 2 && (
+                    <Button variant="ghost" size="sm" className="w-full text-xs opacity-50" onClick={() => setStep(1)}>
+                      Rescan / Change Image
+                    </Button>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -371,8 +415,8 @@ export default function Dashboard() {
               <Truck className="w-6 h-6 text-primary absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
             </div>
             <div className="space-y-2 text-center">
-              <h2 className="text-2xl font-headline font-bold">Intelligent Extraction in Progress</h2>
-              <p className="text-muted-foreground">Gemini 1.5 Flash is analyzing handwriting and translating Hindi operators...</p>
+              <h2 className="text-2xl font-headline font-bold">Processing...</h2>
+              <p className="text-muted-foreground">Gemini 2.5 Flash is analyzing handwriting and extracting operational data.</p>
             </div>
             <Progress value={undefined} className="h-1 bg-secondary" />
           </div>

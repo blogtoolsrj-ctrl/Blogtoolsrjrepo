@@ -23,6 +23,7 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [error, setError] = useState<string | null>(null);
+  const [isInitializing, setIsInitializing] = useState(false);
 
   const stopCamera = useCallback(() => {
     if (stream) {
@@ -35,51 +36,61 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
   }, [stream]);
 
   const startCamera = useCallback(async () => {
+    if (isInitializing) return;
+    setIsInitializing(true);
+    setError(null);
+
     try {
-      setError(null);
-      
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("Camera API not supported in this browser or context.");
+        throw new Error("Camera API not supported in this environment.");
       }
 
-      // Stop any existing stream first
+      // Stop any existing stream before starting a new one
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
-      
-      // Try with ideal constraints first
-      let newStream: MediaStream;
-      try {
-        newStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: facingMode,
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-          }
-        });
-      } catch (e) {
-        console.warn("Retrying camera with simpler constraints...");
-        // Fallback to basic video access
-        newStream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: facingMode } 
-        });
+
+      // Sequential fallback constraints
+      const constraintSets: MediaStreamConstraints[] = [
+        { video: { facingMode: { ideal: facingMode }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
+        { video: { facingMode: facingMode } },
+        { video: true } // Ultimate fallback: just any video device
+      ];
+
+      let newStream: MediaStream | null = null;
+      let lastError: any = null;
+
+      for (const constraints of constraintSets) {
+        try {
+          newStream = await navigator.mediaDevices.getUserMedia(constraints);
+          if (newStream) break;
+        } catch (e) {
+          lastError = e;
+          console.warn("Camera constraint set failed, trying fallback...", constraints, e);
+        }
       }
-      
+
+      if (!newStream) {
+        throw lastError || new Error("Could not find any available camera device.");
+      }
+
       setStream(newStream);
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
       }
     } catch (err: any) {
-      console.error("Camera access error:", err);
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setError("Camera permission denied. Please enable it in browser settings.");
-      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setError("No camera device found.");
+      console.error("Final camera access error:", err);
+      if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setError("No camera device was found on this system.");
+      } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setError("Camera access was denied. Please check your browser permissions.");
       } else {
-        setError("Unable to access camera. Please check permissions and try again.");
+        setError(`Camera Error: ${err.message || "Unknown error"}`);
       }
+    } finally {
+      setIsInitializing(false);
     }
-  }, [facingMode]);
+  }, [facingMode, stream, isInitializing]);
 
   useEffect(() => {
     if (isOpen) {
@@ -88,22 +99,24 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
       stopCamera();
     }
     return () => stopCamera();
-  }, [isOpen, facingMode]);
+  }, [isOpen]);
 
   const handleCapture = () => {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       
-      // Use original video dimensions for quality
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      // Ensure we have valid dimensions
+      const width = video.videoWidth || 1280;
+      const height = video.videoHeight || 720;
+      
+      canvas.width = width;
+      canvas.height = height;
       
       const context = canvas.getContext('2d');
       if (context) {
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        // Initial capture at high quality
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+        context.drawImage(video, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
         onCapture(dataUrl);
         onClose();
       }
@@ -112,6 +125,9 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
 
   const toggleCamera = () => {
     setFacingMode(prev => (prev === 'user' ? 'environment' : 'user'));
+    // Restart camera with new facing mode
+    stopCamera();
+    setTimeout(() => startCamera(), 100);
   };
 
   return (
@@ -123,15 +139,20 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
             Scan Trip Card
           </DialogTitle>
           <DialogDescription className="text-zinc-400">
-            Align the card within the frame for best results.
+            {isInitializing ? "Starting camera..." : "Align the card within the frame."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="relative aspect-[4/3] bg-black flex items-center justify-center">
           {error ? (
-            <div className="p-6 text-center space-y-4">
+            <div className="p-8 text-center space-y-4">
               <p className="text-destructive font-medium text-sm">{error}</p>
-              <Button variant="outline" size="sm" onClick={startCamera} className="bg-zinc-800 border-zinc-700 text-white">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => startCamera()} 
+                className="bg-zinc-800 border-zinc-700 text-white"
+              >
                 Try Again
               </Button>
             </div>
@@ -146,13 +167,14 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
               />
               <canvas ref={canvasRef} className="hidden" />
               
-              {/* Guides */}
-              <div className="absolute inset-8 border-2 border-white/20 rounded-lg pointer-events-none">
-                <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-accent rounded-tl-sm" />
-                <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-accent rounded-tr-sm" />
-                <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-accent rounded-bl-sm" />
-                <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-accent rounded-br-sm" />
-              </div>
+              {!isInitializing && (
+                <div className="absolute inset-8 border-2 border-white/20 rounded-lg pointer-events-none">
+                  <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-accent rounded-tl-sm" />
+                  <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-accent rounded-tr-sm" />
+                  <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-accent rounded-bl-sm" />
+                  <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-accent rounded-br-sm" />
+                </div>
+              )}
             </>
           )}
         </div>
@@ -164,14 +186,20 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
           
           <button 
             onClick={handleCapture}
-            disabled={!!error}
-            className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-white transition-transform active:scale-90 disabled:opacity-50"
+            disabled={!!error || isInitializing}
+            className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-white transition-transform active:scale-90 disabled:opacity-30"
           >
             <Circle className="w-12 h-12 text-black fill-black" strokeWidth={1} />
             <div className="absolute inset-0 rounded-full border-4 border-accent scale-110 group-hover:scale-125 transition-transform opacity-20" />
           </button>
 
-          <Button variant="ghost" size="icon" onClick={toggleCamera} className="text-white hover:bg-white/10">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={toggleCamera} 
+            disabled={isInitializing}
+            className="text-white hover:bg-white/10"
+          >
             <RefreshCw className="w-6 h-6" />
           </Button>
         </div>
