@@ -65,7 +65,24 @@ export default function Dashboard() {
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [appError, setAppError] = useState<string | null>(null);
   
+  // Array state to allow stable editing of PC Numbers and Counts
+  const [pcList, setPcList] = useState<{id: number, pcName: string, count: number}[]>([]);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Initialize pcList when extraction data is received
+  useEffect(() => {
+    if (extractionData?.data?.pcTally) {
+      const formattedList = Object.entries(extractionData.data.pcTally).map(([pcName, count], index) => ({
+        id: index,
+        pcName,
+        count: Number(count)
+      }));
+      setPcList(formattedList);
+    } else {
+      setPcList([]);
+    }
+  }, [extractionData]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -150,29 +167,29 @@ export default function Dashboard() {
     });
   };
 
-  const handleTallyChange = (pc: string, value: number) => {
-    if (!editedData) return;
-    setEditedData(prev => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        pcTally: {
-          ...prev.pcTally,
-          [pc]: value
-        }
-      };
-    });
-  };
-
   const handleSync = async () => {
     if (!editedData || !sheetId) {
       setAppError("Please provide a valid Spreadsheet ID and ensure data is loaded.");
       return;
     }
+    
+    // Reconstruct pcTally dictionary from our editable array state
+    const reconstructedTally: Record<string, number> = {};
+    pcList.forEach(item => {
+      if (item.pcName && item.pcName.trim() !== '') {
+        reconstructedTally[item.pcName.trim()] = item.count;
+      }
+    });
+
+    const dataToSync = {
+      ...editedData,
+      pcTally: reconstructedTally
+    };
+
     setSyncing(true);
     setAppError(null);
     try {
-      const res = await syncToSheetsAction(sheetId, editedData);
+      const res = await syncToSheetsAction(sheetId, dataToSync);
       if (!res.success) {
         setAppError(`Sync Error: ${res.message}`);
       } else {
@@ -371,7 +388,7 @@ export default function Dashboard() {
                   <div className="space-y-2">
                     <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Operator Name</Label>
                     <Input 
-                      value={editedData.operatorName} 
+                      value={editedData.operatorName || ''} 
                       onChange={(e) => handleFieldChange('operatorName', e.target.value)}
                       className="bg-background/50"
                     />
@@ -379,14 +396,14 @@ export default function Dashboard() {
                   <div className="space-y-2">
                     <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Door No</Label>
                     <Input 
-                      value={editedData.doorNo} 
+                      value={editedData.doorNo || ''} 
                       onChange={(e) => handleFieldChange('doorNo', e.target.value)}
                       className="bg-background/50"
                     />
                   </div>
                   <div className="space-y-2">
                     <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Shift</Label>
-                    <Select value={editedData.shift} onValueChange={(val) => handleFieldChange('shift', val)}>
+                    <Select value={editedData.shift || 'A'} onValueChange={(val) => handleFieldChange('shift', val)}>
                       <SelectTrigger className="bg-background/50">
                         <SelectValue />
                       </SelectTrigger>
@@ -413,7 +430,7 @@ export default function Dashboard() {
                     <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Start HMR</Label>
                     <Input 
                       type="number"
-                      value={editedData.metrics.startingHMR} 
+                      value={editedData.metrics.startingHMR || ''} 
                       onChange={(e) => handleFieldChange('metrics.startingHMR', Number(e.target.value))}
                     />
                   </div>
@@ -421,7 +438,7 @@ export default function Dashboard() {
                     <Label className="text-xs font-bold text-accent uppercase tracking-widest">Close HMR</Label>
                     <Input 
                       type="number"
-                      value={editedData.metrics.closingHMR} 
+                      value={editedData.metrics.closingHMR || ''} 
                       onChange={(e) => handleFieldChange('metrics.closingHMR', Number(e.target.value))}
                     />
                   </div>
@@ -429,7 +446,7 @@ export default function Dashboard() {
                     <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Start KM</Label>
                     <Input 
                       type="number"
-                      value={editedData.metrics.startingKM} 
+                      value={editedData.metrics.startingKM || ''} 
                       onChange={(e) => handleFieldChange('metrics.startingKM', Number(e.target.value))}
                     />
                   </div>
@@ -437,8 +454,8 @@ export default function Dashboard() {
                     <Label className="text-xs font-bold text-accent uppercase tracking-widest">Close KM</Label>
                     <Input 
                       type="number"
-                      value={editedData.metrics.endingKM} 
-                      onChange={(e) => handleFieldChange('metrics.endingKM', Number(e.target.value))}
+                      value={editedData.metrics.closingKM || ''} 
+                      onChange={(e) => handleFieldChange('metrics.closingKM', Number(e.target.value))}
                     />
                   </div>
                 </CardContent>
@@ -455,19 +472,25 @@ export default function Dashboard() {
                 <Card className="bg-card border-border overflow-hidden">
                   <CardContent className="p-0">
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 p-6">
-                      {Object.entries(editedData.pcTally).map(([pc, count]) => (
-                        <div key={pc} className="space-y-2 p-3 bg-secondary/20 rounded-lg border border-border/50">
-                          <Label className="text-[10px] font-bold uppercase opacity-70">{pc}</Label>
+                      {pcList.map((item) => (
+                        <div key={item.id} className="space-y-2 p-3 bg-secondary/20 rounded-lg border border-border/50">
+                          <Input 
+                            type="text" 
+                            value={item.pcName} 
+                            onChange={(e) => setPcList(prev => prev.map(p => p.id === item.id ? { ...p, pcName: e.target.value } : p))}
+                            className="h-8 text-center text-xs font-bold uppercase mb-2 border-dashed"
+                            placeholder="PC Name"
+                          />
                           <Input 
                             type="number" 
                             size={1}
-                            value={count} 
-                            onChange={(e) => handleTallyChange(pc, Number(e.target.value))}
+                            value={item.count} 
+                            onChange={(e) => setPcList(prev => prev.map(p => p.id === item.id ? { ...p, count: Number(e.target.value) } : p))}
                             className="h-8 text-center font-mono font-bold text-accent"
                           />
                         </div>
                       ))}
-                      {Object.keys(editedData.pcTally).length === 0 && (
+                      {pcList.length === 0 && (
                         <div className="col-span-full py-8 text-center text-muted-foreground opacity-50">
                           No PC trips identified.
                         </div>
@@ -506,7 +529,7 @@ export default function Dashboard() {
             </div>
             <div className="space-y-2 text-center">
               <h2 className="text-2xl font-headline font-bold">Processing...</h2>
-              <p className="text-muted-foreground">Gemini 2.5 Flash is analyzing handwriting and extracting operational data.</p>
+              <p className="text-muted-foreground">CREW AI is analyzing handwriting and extracting operational data.</p>
             </div>
             <Progress value={undefined} className="h-1 bg-secondary" />
           </div>
