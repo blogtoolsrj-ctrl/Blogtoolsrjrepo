@@ -41,44 +41,64 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
     setError(null);
     stopCamera();
 
+    const tryStream = async (constraints: MediaStreamConstraints) => {
+      try {
+        return await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (e) {
+        return null;
+      }
+    };
+
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Camera access is not supported by your browser.");
       }
 
-      let newStream: MediaStream;
+      // Step 1: Attempt high-quality portrait constraints
+      let newStream = await tryStream({
+        video: { 
+          facingMode: { ideal: facingMode },
+          width: { ideal: 1080 },
+          height: { ideal: 1920 }
+        }
+      });
 
-      // Stage 1: Attempt connection with preferred constraints
-      try {
-        newStream = await navigator.mediaDevices.getUserMedia({
+      // Step 2: Attempt high-quality landscape constraints (some devices only report this way)
+      if (!newStream) {
+        newStream = await tryStream({
           video: { 
             facingMode: { ideal: facingMode },
-            width: { ideal: 1080 },
-            height: { ideal: 1920 }
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
           }
         });
-      } catch (e) {
-        console.warn("Primary camera constraints failed, attempting fallback...", e);
-        // Stage 2: Absolute fallback
-        newStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
+      // Step 3: Absolute fallback (Any video stream)
+      if (!newStream) {
+        newStream = await tryStream({ video: true });
+      }
+
+      if (!newStream) {
+        throw new Error("Requested device not found. Please ensure your camera is connected and permissions are granted.");
       }
 
       streamRef.current = newStream;
       
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
-        await videoRef.current.play().catch(err => {
-          console.error("Video play failed:", err);
-        });
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play().catch(err => {
+            console.error("Video play failed:", err);
+          });
+        };
       }
     } catch (err: any) {
       console.error("Camera initialization error:", err);
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setError("Camera permission denied. Please allow access in your browser settings to scan cards.");
-      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setError("No camera hardware detected. If you are on a desktop, please ensure your webcam is connected.");
+        setError("Camera permission denied. Please allow access to scan cards.");
       } else {
-        setError(err.message || "An unexpected error occurred while accessing the camera.");
+        setError(err.message || "Could not access camera hardware.");
       }
     } finally {
       setIsInitializing(false);
@@ -134,7 +154,6 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
           </DialogDescription>
         </DialogHeader>
 
-        {/* Changed to vertical aspect ratio aspect-[3/4] and min-h */}
         <div className="relative aspect-[3/4] bg-zinc-950 flex items-center justify-center overflow-hidden min-h-[500px]">
           {error ? (
             <div className="p-10 text-center space-y-4 z-10">
@@ -146,7 +165,7 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
                 onClick={startCamera} 
                 className="bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700"
               >
-                Retry Camera Access
+                Retry Camera
               </Button>
             </div>
           ) : (
@@ -167,8 +186,7 @@ export function CameraModule({ isOpen, onClose, onCapture }: CameraModuleProps) 
               <canvas ref={canvasRef} className="hidden" />
               
               {!isInitializing && !error && (
-                /* Adjusted vertical scan guide corners */
-                <div className="absolute inset-x-12 inset-y-16 border-2 border-white/10 rounded-lg pointer-events-none z-10">
+                <div className="absolute inset-x-8 inset-y-12 border-2 border-white/10 rounded-lg pointer-events-none z-10">
                   <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-accent rounded-tl-sm shadow-[0_0_15px_rgba(82,206,224,0.4)]" />
                   <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-accent rounded-tr-sm shadow-[0_0_15px_rgba(82,206,224,0.4)]" />
                   <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-accent rounded-bl-sm shadow-[0_0_15px_rgba(82,206,224,0.4)]" />

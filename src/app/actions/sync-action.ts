@@ -30,7 +30,10 @@ export async function syncToSheetsAction(
     return {
       success: true,
       message: 'Successfully synchronized with Google Sheets.',
-      syncResult: result,
+      syncResult: {
+        targetRow: result.targetRow,
+        shiftTab: result.targetTab // Maps the database string cleanly to the interface requirement
+      },
     };
   } catch (error: any) {
     return {

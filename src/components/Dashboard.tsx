@@ -373,7 +373,6 @@ export default function Dashboard() {
         <div className="lg:col-span-8 space-y-8">
           {editedData ? (
             <div className="space-y-8 animate-in slide-in-from-right duration-500">
-              {/* Header Info Edit */}
               <Card className="bg-card border-border overflow-hidden">
                 <CardHeader className="bg-secondary/30 pb-4 border-b">
                   <div className="flex items-center justify-between">
@@ -417,7 +416,6 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
 
-              {/* Metrics Edit */}
               <Card className="bg-card border-border overflow-hidden">
                 <CardHeader className="bg-secondary/30 pb-4 border-b">
                   <div className="flex items-center justify-between">
@@ -461,7 +459,6 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
 
-              {/* Tally Edit */}
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
                   <div className="h-px flex-1 bg-border" />
